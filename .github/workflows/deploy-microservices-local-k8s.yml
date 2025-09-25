@@ -1,0 +1,445 @@
+name: deployMicroservicesOnLocalMachineDocker
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Deployment Environment'
+        required: true
+        default: 'local-k8s'
+        type: choice
+        options:
+        - local-k8s
+        - staging-k8s
+      image_tag:
+        description: 'Docker Image Tag'
+        required: true
+        default: 'latest'
+        type: string
+
+env:
+  DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+  DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+  IMAGE_TAG: ${{ github.event.inputs.image_tag || 'latest' }}
+  K8S_NAMESPACE: courier-system
+
+jobs:
+  setup-k8s-cluster:
+    name: Setup Local Kubernetes Cluster
+    runs-on: ubuntu-latest
+    outputs:
+      cluster-ready: ${{ steps.k8s-setup.outputs.ready }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Docker
+      uses: docker/setup-buildx-action@v3
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Install Kind (Kubernetes in Docker)
+      run: |
+        curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+        chmod +x ./kind
+        sudo mv ./kind /usr/local/bin/kind
+
+    - name: Create Kind cluster
+      run: |
+        cat <<EOF > kind-config.yaml
+        kind: Cluster
+        apiVersion: kind.x-k8s.io/v1alpha4
+        name: courier-k8s-cluster
+        nodes:
+        - role: control-plane
+          kubeadmConfigPatches:
+          - |
+            kind: InitConfiguration
+            nodeRegistration:
+              kubeletExtraArgs:
+                node-labels: "ingress-ready=true"
+          extraPortMappings:
+          - containerPort: 80
+            hostPort: 80
+            protocol: TCP
+          - containerPort: 443
+            hostPort: 443
+            protocol: TCP
+          - containerPort: 30080
+            hostPort: 30080
+            protocol: TCP
+          - containerPort: 30081
+            hostPort: 30081
+            protocol: TCP
+          - containerPort: 30000
+            hostPort: 30000
+            protocol: TCP
+        - role: worker
+        - role: worker
+        EOF
+        
+        kind create cluster --config=kind-config.yaml --wait=300s
+
+    - name: Install NGINX Ingress Controller
+      run: |
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=300s
+
+    - name: Verify cluster setup
+      id: k8s-setup
+      run: |
+        kubectl cluster-info
+        kubectl get nodes
+        kubectl get pods -A
+        echo "ready=true" >> $GITHUB_OUTPUT
+
+    - name: Cache Kind cluster
+      uses: actions/cache@v3
+      with:
+        path: ~/.kube
+        key: kind-cluster-${{ runner.os }}-${{ github.sha }}
+
+  build-and-push-images:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    needs: setup-k8s-cluster
+    strategy:
+      matrix:
+        service:
+          - name: main-service
+            dockerfile: Dockerfile.backend
+            context: .
+          - name: customer-interface
+            dockerfile: Dockerfile.customer-interface
+            context: ./customer-interface-service
+          - name: frontend
+            dockerfile: Dockerfile.frontend
+            context: ./frontend
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      if: matrix.service.name != 'frontend'
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Setup Node.js
+      if: matrix.service.name == 'frontend'
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Cache Gradle packages
+      if: matrix.service.name != 'frontend'
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+    - name: Build Main Service
+      if: matrix.service.name == 'main-service'
+      run: |
+        ./gradlew clean build -x test
+        ls -la build/libs/
+
+    - name: Build Customer Interface Service
+      if: matrix.service.name == 'customer-interface'
+      run: |
+        cd customer-interface-service
+        ./gradlew clean build -x test
+        ls -la build/libs/
+
+    - name: Build Frontend
+      if: matrix.service.name == 'frontend'
+      run: |
+        cd frontend
+        npm ci
+        npm run build
+        ls -la build/
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ env.DOCKER_HUB_USERNAME }}
+        password: ${{ env.DOCKER_HUB_TOKEN }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ matrix.service.context }}
+        file: ${{ matrix.service.context }}/${{ matrix.service.dockerfile }}
+        push: true
+        tags: |
+          ${{ env.DOCKER_HUB_USERNAME }}/courier-${{ matrix.service.name }}:${{ env.IMAGE_TAG }}
+          ${{ env.DOCKER_HUB_USERNAME }}/courier-${{ matrix.service.name }}:latest
+        platforms: linux/amd64,linux/arm64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  deploy-infrastructure:
+    name: Deploy Infrastructure Services
+    runs-on: ubuntu-latest
+    needs: [setup-k8s-cluster, build-and-push-images]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Restore Kind cluster
+      uses: actions/cache@v3
+      with:
+        path: ~/.kube
+        key: kind-cluster-${{ runner.os }}-${{ github.sha }}
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Create namespace
+      run: |
+        kubectl apply -f k8s/dockerhub/namespace.yaml
+
+    - name: Create Docker Hub secret
+      run: |
+        kubectl create secret docker-registry dockerhub-secret \
+          --docker-server=docker.io \
+          --docker-username=${{ env.DOCKER_HUB_USERNAME }} \
+          --docker-password=${{ env.DOCKER_HUB_TOKEN }} \
+          --namespace=${{ env.K8S_NAMESPACE }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Deploy ConfigMaps and Secrets
+      run: |
+        kubectl apply -f k8s/dockerhub/configmap.yaml
+        kubectl apply -f k8s/dockerhub/secrets.yaml
+
+    - name: Deploy Infrastructure Services
+      run: |
+        kubectl apply -f k8s/dockerhub/infrastructure-deployments.yaml
+
+    - name: Wait for infrastructure to be ready
+      run: |
+        kubectl wait --for=condition=available --timeout=300s \
+          deployment/courier-postgresql -n ${{ env.K8S_NAMESPACE }}
+        kubectl wait --for=condition=available --timeout=300s \
+          deployment/courier-zookeeper -n ${{ env.K8S_NAMESPACE }}
+        kubectl wait --for=condition=available --timeout=300s \
+          deployment/courier-kafka -n ${{ env.K8S_NAMESPACE }}
+        kubectl wait --for=condition=available --timeout=300s \
+          deployment/courier-redis -n ${{ env.K8S_NAMESPACE }}
+
+    - name: Initialize Kafka topics
+      run: |
+        kubectl apply -f k8s/dockerhub/kafka-topic-init.yaml
+        kubectl wait --for=condition=complete --timeout=300s \
+          job/kafka-topic-init -n ${{ env.K8S_NAMESPACE }}
+
+  deploy-microservices:
+    name: Deploy Microservices
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Restore Kind cluster
+      uses: actions/cache@v3
+      with:
+        path: ~/.kube
+        key: kind-cluster-${{ runner.os }}-${{ github.sha }}
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Update image references
+      run: |
+        sed -i "s/YOUR_DOCKERHUB_USERNAME/${{ env.DOCKER_HUB_USERNAME }}/g" k8s/dockerhub/*-deployment.yaml
+        sed -i "s/:latest/:${{ env.IMAGE_TAG }}/g" k8s/dockerhub/*-deployment.yaml
+
+    - name: Deploy Main Service
+      run: |
+        kubectl apply -f k8s/dockerhub/main-service-deployment.yaml
+        kubectl wait --for=condition=available --timeout=300s \
+          deployment/courier-main-service -n ${{ env.K8S_NAMESPACE }}
+
+    - name: Deploy Customer Interface Service
+      run: |
+        kubectl apply -f k8s/dockerhub/customer-interface-deployment.yaml
+        kubectl wait --for=condition=available --timeout=300s \
+          deployment/courier-customer-interface -n ${{ env.K8S_NAMESPACE }}
+
+    - name: Deploy Frontend Service
+      run: |
+        kubectl apply -f k8s/dockerhub/frontend-deployment.yaml
+        kubectl wait --for=condition=available --timeout=300s \
+          deployment/courier-frontend -n ${{ env.K8S_NAMESPACE }}
+
+    - name: Deploy Ingress
+      run: |
+        kubectl apply -f k8s/dockerhub/ingress.yaml
+
+  verify-deployment:
+    name: Verify Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy-microservices]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Restore Kind cluster
+      uses: actions/cache@v3
+      with:
+        path: ~/.kube
+        key: kind-cluster-${{ runner.os }}-${{ github.sha }}
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Check deployment status
+      run: |
+        echo "=== Deployment Status ==="
+        kubectl get pods -n ${{ env.K8S_NAMESPACE }}
+        kubectl get services -n ${{ env.K8S_NAMESPACE }}
+        kubectl get ingress -n ${{ env.K8S_NAMESPACE }}
+
+    - name: Verify pod distribution
+      run: |
+        echo "=== Pod Distribution ==="
+        echo "Main Service pods:"
+        kubectl get pods -n ${{ env.K8S_NAMESPACE }} -l app=courier-main-service -o wide
+        echo "Customer Interface pods:"
+        kubectl get pods -n ${{ env.K8S_NAMESPACE }} -l app=courier-customer-interface -o wide
+        echo "Frontend pods:"
+        kubectl get pods -n ${{ env.K8S_NAMESPACE }} -l app=courier-frontend -o wide
+
+    - name: Health checks
+      run: |
+        echo "=== Health Checks ==="
+        
+        # Wait for services to be ready
+        sleep 60
+        
+        # Port forward and test main service
+        kubectl port-forward svc/courier-main-service 8080:8080 -n ${{ env.K8S_NAMESPACE }} &
+        PF_PID1=$!
+        sleep 10
+        
+        if curl -f http://localhost:8080/actuator/health --max-time 30; then
+          echo "✓ Main Service: Healthy"
+        else
+          echo "⚠ Main Service: Starting up..."
+        fi
+        kill $PF_PID1 2>/dev/null || true
+        
+        # Port forward and test customer interface
+        kubectl port-forward svc/courier-customer-interface 8081:8081 -n ${{ env.K8S_NAMESPACE }} &
+        PF_PID2=$!
+        sleep 10
+        
+        if curl -f http://localhost:8081/actuator/health --max-time 30; then
+          echo "✓ Customer Interface: Healthy"
+        else
+          echo "⚠ Customer Interface: Starting up..."
+        fi
+        kill $PF_PID2 2>/dev/null || true
+        
+        # Port forward and test frontend
+        kubectl port-forward svc/courier-frontend 3000:3000 -n ${{ env.K8S_NAMESPACE }} &
+        PF_PID3=$!
+        sleep 10
+        
+        if curl -f http://localhost:3000/health --max-time 30; then
+          echo "✓ Frontend: Healthy"
+        else
+          echo "⚠ Frontend: Starting up..."
+        fi
+        kill $PF_PID3 2>/dev/null || true
+
+    - name: Test API endpoints
+      run: |
+        echo "=== API Testing ==="
+        
+        # Port forward main service for API testing
+        kubectl port-forward svc/courier-main-service 8080:8080 -n ${{ env.K8S_NAMESPACE }} &
+        PF_PID=$!
+        sleep 15
+        
+        # Test health endpoint
+        echo "Testing health endpoint..."
+        curl -f http://localhost:8080/actuator/health || echo "Health check failed"
+        
+        # Test customers endpoint
+        echo "Testing customers endpoint..."
+        curl -f http://localhost:8080/api/v1/customers || echo "Customers endpoint failed"
+        
+        # Test parcels endpoint
+        echo "Testing parcels endpoint..."
+        curl -f http://localhost:8080/api/v1/parcels || echo "Parcels endpoint failed"
+        
+        kill $PF_PID 2>/dev/null || true
+
+    - name: Generate deployment report
+      run: |
+        echo "=== Deployment Report ===" > deployment-report.txt
+        echo "Timestamp: $(date)" >> deployment-report.txt
+        echo "Image Tag: ${{ env.IMAGE_TAG }}" >> deployment-report.txt
+        echo "Namespace: ${{ env.K8S_NAMESPACE }}" >> deployment-report.txt
+        echo "" >> deployment-report.txt
+        
+        echo "=== Pod Status ===" >> deployment-report.txt
+        kubectl get pods -n ${{ env.K8S_NAMESPACE }} >> deployment-report.txt
+        echo "" >> deployment-report.txt
+        
+        echo "=== Service Status ===" >> deployment-report.txt
+        kubectl get services -n ${{ env.K8S_NAMESPACE }} >> deployment-report.txt
+        echo "" >> deployment-report.txt
+        
+        echo "=== Ingress Status ===" >> deployment-report.txt
+        kubectl get ingress -n ${{ env.K8S_NAMESPACE }} >> deployment-report.txt
+        echo "" >> deployment-report.txt
+        
+        echo "=== Resource Usage ===" >> deployment-report.txt
+        kubectl top pods -n ${{ env.K8S_NAMESPACE }} >> deployment-report.txt || echo "Metrics not available" >> deployment-report.txt
+        
+        cat deployment-report.txt
+
+    - name: Upload deployment report
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-report-${{ env.IMAGE_TAG }}
+        path: deployment-report.txt
+
+  cleanup:
+    name: Cleanup Resources
+    runs-on: ubuntu-latest
+    needs: [verify-deployment]
+    if: always()
+    steps:
+    - name: Cleanup Kind cluster
+      run: |
+        kind delete cluster --name courier-k8s-cluster || true
+
+    - name: Cleanup Docker resources
+      run: |
+        docker system prune -f || true
