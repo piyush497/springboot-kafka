@@ -378,9 +378,9 @@ jobs:
     strategy:
       matrix:
         service: [
-          { name: 'main-service', condition: '${{ needs.build-main-service.result == "success" }}' },
-          { name: 'customer-interface', condition: '${{ needs.build-customer-interface.result == "success" }}' },
-          { name: 'frontend', condition: '${{ needs.build-frontend.result == "success" }}' }
+          { name: 'main-service', condition: needs.build-main-service.result == 'success' },
+          { name: 'customer-interface', condition: needs.build-customer-interface.result == 'success' },
+          { name: 'frontend', condition: needs.build-frontend.result == 'success' }
         ]
     steps:
     - name: Run Trivy vulnerability scanner
