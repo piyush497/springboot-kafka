@@ -1,0 +1,127 @@
+# Production environment values
+environment: production
+namespace: courier-system
+
+# Production-specific image tags
+mainService:
+  image:
+    tag: "latest"
+  replicaCount: 5
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+  env:
+    LOG_LEVEL: "INFO"
+  ingress:
+    hosts:
+      - host: api.courier.company.com
+        paths:
+          - path: /api/v1
+            pathType: Prefix
+    tls:
+      - secretName: courier-api-prod-tls
+        hosts:
+          - api.courier.company.com
+  autoscaling:
+    minReplicas: 5
+    maxReplicas: 20
+
+customerInterface:
+  image:
+    tag: "latest"
+  replicaCount: 5
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  env:
+    LOG_LEVEL: "INFO"
+    MAX_PARCELS_PER_DAY: "1000"
+    RATE_LIMIT: "120"
+  ingress:
+    hosts:
+      - host: customer.courier.company.com
+        paths:
+          - path: /api/v1/customer
+            pathType: Prefix
+    tls:
+      - secretName: courier-customer-prod-tls
+        hosts:
+          - customer.courier.company.com
+  autoscaling:
+    minReplicas: 5
+    maxReplicas: 15
+
+frontend:
+  image:
+    tag: "latest"
+  replicaCount: 3
+  env:
+    REACT_APP_ENVIRONMENT: "production"
+  ingress:
+    hosts:
+      - host: app.courier.company.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: courier-app-prod-tls
+        hosts:
+          - app.courier.company.com
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 8
+
+# Use external services in production
+postgresql:
+  enabled: false
+
+kafka:
+  enabled: false
+
+redis:
+  enabled: false
+
+# External service configurations for production
+database:
+  host: "courier-prod-postgres.postgres.database.azure.com"
+  port: 5432
+  name: "courier_prod_db"
+
+messaging:
+  kafka:
+    host: "courier-prod-kafka.servicebus.windows.net"
+    port: 9093
+
+cache:
+  redis:
+    host: "courier-prod-redis.redis.cache.windows.net"
+    port: 6380
+
+# Production monitoring and observability
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+
+# Enhanced security for production
+networkPolicy:
+  enabled: true
+  ingress:
+    enabled: true
+  egress:
+    enabled: true
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2

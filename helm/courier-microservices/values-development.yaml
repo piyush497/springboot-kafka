@@ -1,0 +1,95 @@
+# Development environment values
+environment: development
+namespace: courier-system
+
+# Development-specific image tags
+mainService:
+  image:
+    tag: "dev-latest"
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "250m"
+  env:
+    LOG_LEVEL: "DEBUG"
+  ingress:
+    hosts:
+      - host: api.dev.courier.company.com
+        paths:
+          - path: /api/v1
+            pathType: Prefix
+    tls:
+      - secretName: courier-api-dev-tls
+        hosts:
+          - api.dev.courier.company.com
+
+customerInterface:
+  image:
+    tag: "dev-latest"
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "100m"
+  env:
+    LOG_LEVEL: "DEBUG"
+    MAX_PARCELS_PER_DAY: "10"
+    RATE_LIMIT: "30"
+  ingress:
+    hosts:
+      - host: customer.dev.courier.company.com
+        paths:
+          - path: /api/v1/customer
+            pathType: Prefix
+    tls:
+      - secretName: courier-customer-dev-tls
+        hosts:
+          - customer.dev.courier.company.com
+
+frontend:
+  image:
+    tag: "dev-latest"
+  replicaCount: 1
+  env:
+    REACT_APP_ENVIRONMENT: "development"
+  ingress:
+    hosts:
+      - host: app.dev.courier.company.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: courier-app-dev-tls
+        hosts:
+          - app.dev.courier.company.com
+
+# Enable embedded services for development
+postgresql:
+  enabled: true
+  primary:
+    persistence:
+      size: 1Gi
+
+kafka:
+  enabled: true
+  persistence:
+    size: 1Gi
+
+redis:
+  enabled: true
+  master:
+    persistence:
+      size: 1Gi
+
+# Development monitoring
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true

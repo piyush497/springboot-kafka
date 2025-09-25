@@ -1,0 +1,146 @@
+{{- if .Values.mainService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.mainService.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.mainService.name }}
+    component: backend
+    version: {{ .Values.mainService.image.tag }}
+    chart: {{ include "courier-microservices.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.mainService.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: {{ .Values.mainService.name }}
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.mainService.name }}
+        component: backend
+        version: {{ .Values.mainService.image.tag }}
+        release: {{ .Release.Name }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.mainService.port }}"
+        prometheus.io/path: "/actuator/prometheus"
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "courier-microservices.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: {{ .Values.mainService.name }}
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.mainService.image.repository }}:{{ .Values.mainService.image.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        ports:
+        - containerPort: {{ .Values.mainService.port }}
+          name: http
+          protocol: TCP
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: {{ .Values.mainService.env.SPRING_PROFILES_ACTIVE | quote }}
+        - name: SERVER_PORT
+          value: {{ .Values.mainService.port | quote }}
+        - name: DATABASE_URL
+          value: "jdbc:postgresql://{{ .Values.database.host }}:{{ .Values.database.port }}/{{ .Values.database.name }}"
+        - name: DATABASE_USERNAME
+          value: {{ .Values.database.username | quote }}
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.existingSecret }}
+              key: {{ .Values.database.secretKeys.password }}
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "{{ .Values.messaging.kafka.host }}:{{ .Values.messaging.kafka.port }}"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.security.jwt.existingSecret }}
+              key: {{ .Values.security.jwt.secretKeys.mainService }}
+        - name: LOG_LEVEL
+          value: {{ .Values.mainService.env.LOG_LEVEL | quote }}
+        - name: ENVIRONMENT
+          value: {{ .Values.environment | quote }}
+        {{- if .Values.cache.redis.enabled }}
+        - name: REDIS_HOST
+          value: {{ .Values.cache.redis.host | quote }}
+        - name: REDIS_PORT
+          value: {{ .Values.cache.redis.port | quote }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.mainService.resources | nindent 12 }}
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: {{ .Values.mainService.port }}
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: {{ .Values.mainService.port }}
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: {{ .Values.mainService.port }}
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        volumeMounts:
+        - name: logs
+          mountPath: /var/log/courier
+        - name: temp
+          mountPath: /tmp
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: temp
+        emptyDir: {}
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - key: "kubernetes.azure.com/scalesetpriority"
+        operator: "Equal"
+        value: "spot"
+        effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - {{ .Values.mainService.name }}
+              topologyKey: kubernetes.io/hostname
+{{- end }}

@@ -1,0 +1,130 @@
+{{- if .Values.mainService.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.mainService.name }}-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.mainService.name }}
+    component: ingress
+    chart: {{ include "courier-microservices.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+  annotations:
+    {{- toYaml .Values.mainService.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.mainService.ingress.className }}
+  {{- if .Values.mainService.ingress.tls }}
+  tls:
+    {{- range .Values.mainService.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.mainService.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $.Values.mainService.name }}
+                port:
+                  number: {{ $.Values.mainService.service.port }}
+          {{- end }}
+    {{- end }}
+---
+{{- end }}
+
+{{- if .Values.customerInterface.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.customerInterface.name }}-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.customerInterface.name }}
+    component: ingress
+    chart: {{ include "courier-microservices.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+  annotations:
+    {{- toYaml .Values.customerInterface.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.customerInterface.ingress.className }}
+  {{- if .Values.customerInterface.ingress.tls }}
+  tls:
+    {{- range .Values.customerInterface.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.customerInterface.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $.Values.customerInterface.name }}
+                port:
+                  number: {{ $.Values.customerInterface.service.port }}
+          {{- end }}
+    {{- end }}
+---
+{{- end }}
+
+{{- if .Values.frontend.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.frontend.name }}-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.frontend.name }}
+    component: ingress
+    chart: {{ include "courier-microservices.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+  annotations:
+    {{- toYaml .Values.frontend.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.frontend.ingress.className }}
+  {{- if .Values.frontend.ingress.tls }}
+  tls:
+    {{- range .Values.frontend.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.frontend.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $.Values.frontend.name }}
+                port:
+                  number: {{ $.Values.frontend.service.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}

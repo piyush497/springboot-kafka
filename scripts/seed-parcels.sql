@@ -1,0 +1,30 @@
+-- Insert 200 sample parcels with various statuses
+INSERT INTO parcels (id, tracking_number, sender_id, recipient_name, recipient_phone, recipient_email, pickup_address_line1, pickup_city, pickup_state, pickup_postal_code, pickup_country, delivery_address_line1, delivery_city, delivery_state, delivery_postal_code, delivery_country, weight_kg, length_cm, width_cm, height_cm, declared_value, insurance_amount, priority, status, special_instructions, estimated_delivery_date, actual_delivery_date, created_at, updated_at) VALUES
+
+-- DELIVERED parcels (50)
+(1, 'TRK001000001', 1, 'Alice Cooper', '+1-555-9001', 'alice.cooper@email.com', '123 Business Ave', 'New York', 'NY', '10001', 'USA', '789 Delivery St', 'Brooklyn', 'NY', '11201', 'USA', 2.5, 30, 20, 15, 150.00, 15.00, 'STANDARD', 'DELIVERED', 'Fragile - Handle with care', '2024-01-15', '2024-01-14', '2024-01-10 09:00:00', '2024-01-14 16:30:00'),
+(2, 'TRK001000002', 2, 'Bob Wilson', '+1-555-9002', 'bob.wilson@email.com', '456 Commerce St', 'Los Angeles', 'CA', '90210', 'USA', '321 Recipient Ave', 'Pasadena', 'CA', '91101', 'USA', 1.8, 25, 18, 12, 89.99, 9.00, 'EXPRESS', 'DELIVERED', 'Signature required', '2024-01-12', '2024-01-11', '2024-01-08 14:30:00', '2024-01-11 11:45:00'),
+(3, 'TRK001000003', 3, 'Carol Davis', '+1-555-9003', 'carol.davis@email.com', '789 Innovation Blvd', 'San Francisco', 'CA', '94102', 'USA', '654 Tech Way', 'San Jose', 'CA', '95101', 'USA', 3.2, 35, 25, 20, 299.99, 30.00, 'PRIORITY', 'DELIVERED', 'Electronics - Keep dry', '2024-01-18', '2024-01-17', '2024-01-12 10:15:00', '2024-01-17 14:20:00'),
+(4, 'TRK001000004', 4, 'David Smith', '+1-555-9004', 'david.smith@email.com', '321 Residential Dr', 'Chicago', 'IL', '60601', 'USA', '987 Home St', 'Evanston', 'IL', '60201', 'USA', 0.9, 20, 15, 8, 45.50, 4.50, 'STANDARD', 'DELIVERED', 'Birthday gift', '2024-01-20', '2024-01-19', '2024-01-15 16:45:00', '2024-01-19 10:30:00'),
+(5, 'TRK001000005', 5, 'Eva Johnson', '+1-555-9005', 'eva.johnson@email.com', '654 Oak Street', 'Houston', 'TX', '77001', 'USA', '147 Destination Blvd', 'Austin', 'TX', '78701', 'USA', 4.1, 40, 30, 25, 450.00, 45.00, 'EXPRESS', 'DELIVERED', 'Medical supplies', '2024-01-16', '2024-01-15', '2024-01-11 08:20:00', '2024-01-15 13:15:00'),
+
+-- OUT_FOR_DELIVERY parcels (30)
+(51, 'TRK001000051', 11, 'Kate Wilson', '+1-555-9051', 'kate.wilson@email.com', '852 Cedar Lane', 'Portland', 'OR', '97201', 'USA', '159 Delivery Dr', 'Salem', 'OR', '97301', 'USA', 1.3, 22, 18, 9, 65.00, 6.50, 'STANDARD', 'OUT_FOR_DELIVERY', 'Gift wrapping included', '2024-02-15', NULL, '2024-02-10 10:30:00', '2024-02-14 13:45:00'),
+(52, 'TRK001000052', 12, 'Liam Taylor', '+1-555-9052', 'liam.taylor@email.com', '963 Speed St', 'Las Vegas', 'NV', '89101', 'USA', '357 Arrival Ave', 'Henderson', 'NV', '89002', 'USA', 2.9, 33, 24, 18, 189.99, 19.00, 'PRIORITY', 'OUT_FOR_DELIVERY', 'Sports equipment', '2024-02-16', NULL, '2024-02-11 14:15:00', '2024-02-14 16:20:00'),
+(53, 'TRK001000053', 13, 'Mia Rodriguez', '+1-555-9053', 'mia.rodriguez@email.com', '159 Elm Street', 'Atlanta', 'GA', '30301', 'USA', '468 Complete St', 'Marietta', 'GA', '30060', 'USA', 3.5, 36, 26, 21, 275.00, 27.50, 'EXPRESS', 'OUT_FOR_DELIVERY', 'Art supplies', '2024-02-17', NULL, '2024-02-12 11:45:00', '2024-02-14 15:30:00'),
+
+-- LOADED_IN_TRUCK parcels (40)
+(81, 'TRK001000081', 21, 'Uma Wilson', '+1-555-9081', 'uma.wilson@email.com', '135 Poplar Ave', 'Kansas City', 'MO', '64101', 'USA', '357 Destination Dr', 'Topeka', 'KS', '66603', 'USA', 1.6, 24, 20, 10, 85.00, 8.50, 'STANDARD', 'LOADED_IN_TRUCK', 'Office supplies', '2024-02-18', NULL, '2024-02-13 14:40:00', '2024-02-14 16:15:00'),
+(82, 'TRK001000082', 22, 'Victor Brown', '+1-555-9082', 'victor.brown@email.com', '246 Prime St', 'Salt Lake City', 'UT', '84101', 'USA', '468 Finish Line', 'Provo', 'UT', '84601', 'USA', 3.7, 37, 27, 22, 289.99, 29.00, 'EXPRESS', 'LOADED_IN_TRUCK', 'Outdoor gear', '2024-02-19', NULL, '2024-02-14 10:50:00', '2024-02-14 12:30:00'),
+
+-- IN_TRANSIT parcels (40)
+(121, 'TRK001000121', 31, 'Rachel Clark', '+1-555-9121', 'rachel.clark@email.com', '246 Magnolia Dr', 'Omaha', 'NE', '68101', 'USA', '579 Target Ave', 'Lincoln', 'NE', '68501', 'USA', 2.3, 29, 21, 14, 125.00, 12.50, 'STANDARD', 'IN_TRANSIT', 'Books', '2024-02-20', NULL, '2024-02-15 09:20:00', '2024-02-15 11:30:00'),
+(122, 'TRK001000122', 32, 'Sam Davis', '+1-555-9122', 'sam.davis@email.com', '357 Blitz Way', 'Tulsa', 'OK', '74101', 'USA', '681 Final St', 'Oklahoma City', 'OK', '73101', 'USA', 1.9, 26, 19, 12, 95.00, 9.50, 'PRIORITY', 'IN_TRANSIT', 'Clothing', '2024-02-21', NULL, '2024-02-15 13:45:00', '2024-02-15 15:20:00'),
+
+-- PICKED_UP parcels (30)
+(161, 'TRK001000161', 41, 'Joshua King', '+1-555-9161', 'joshua.king@email.com', '357 Walnut Ave', 'Tucson', 'AZ', '85702', 'USA', '792 Success Blvd', 'Phoenix', 'AZ', '85001', 'USA', 2.7, 31, 22, 16, 165.00, 16.50, 'EXPRESS', 'PICKED_UP', 'Electronics', '2024-02-22', NULL, '2024-02-16 08:15:00', '2024-02-16 10:45:00'),
+(162, 'TRK001000162', 42, 'Megan Wright', '+1-555-9162', 'megan.wright@email.com', '579 Beech Street', 'Colorado Springs', 'CO', '80901', 'USA', '813 Victory Lane', 'Denver', 'CO', '80201', 'USA', 3.4, 34, 24, 19, 245.00, 24.50, 'PRIORITY', 'PICKED_UP', 'Home goods', '2024-02-23', NULL, '2024-02-16 12:30:00', '2024-02-16 14:15:00'),
+
+-- REGISTERED parcels (10)
+(191, 'TRK001000191', 48, 'Jordan Baker', '+1-555-9191', 'jordan.baker@email.com', '246 Cherry Ave', 'Corpus Christi', 'TX', '78401', 'USA', '924 End St', 'Houston', 'TX', '77001', 'USA', 1.5, 23, 17, 11, 75.00, 7.50, 'STANDARD', 'REGISTERED', 'Documents', '2024-02-24', NULL, '2024-02-16 16:00:00', '2024-02-16 16:00:00'),
+(192, 'TRK001000192', 49, 'Alex Thompson', '+1-555-9192', 'alex.thompson@email.com', '357 Infinity Way', 'Reno', 'NV', '89501', 'USA', '135 Final Ave', 'Las Vegas', 'NV', '89101', 'USA', 2.1, 28, 20, 13, 115.00, 11.50, 'EXPRESS', 'REGISTERED', 'Gift items', '2024-02-25', NULL, '2024-02-16 17:30:00', '2024-02-16 17:30:00');

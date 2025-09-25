@@ -1,0 +1,76 @@
+spring:
+  profiles:
+    active: production
+  
+  # Azure Event Hub Configuration
+  cloud:
+    azure:
+      eventhubs:
+        connection-string: ${AZURE_EVENTHUBS_CONNECTION_STRING}
+        namespace: ${AZURE_EVENTHUBS_NAMESPACE}
+    stream:
+      eventhubs:
+        binder:
+          checkpoint-mode: manual
+          auto-startup: true
+      bindings:
+        # Internal event processing
+        parcelEvents-out-0:
+          destination: parcel-tracking-events
+          content-type: application/json
+          producer:
+            partition-key-expression: headers['partitionKey']
+        parcelEvents-in-0:
+          destination: parcel-tracking-events
+          content-type: application/json
+          group: courier-internal-group
+          consumer:
+            checkpoint-mode: manual
+        
+        # ABC Transport integration
+        abcTransport-out-0:
+          destination: abc-transport-events
+          content-type: application/json
+          producer:
+            partition-key-expression: headers['partitionKey']
+        abcTransportResponse-in-0:
+          destination: abc-transport-responses
+          content-type: application/json
+          group: courier-abc-response-group
+          consumer:
+            checkpoint-mode: manual
+
+# Event Hub Topics Configuration
+eventhub:
+  topics:
+    incoming-orders: "incoming-parcel-orders"
+    abc-transport: "abc-transport-events"
+    abc-transport-responses: "abc-transport-responses"
+    tracking-events: "parcel-tracking-events"
+    internal-events: "courier-internal-events"
+
+# Production logging
+logging:
+  level:
+    com.courier: INFO
+    org.springframework.cloud.stream: INFO
+    com.azure: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: /var/log/courier-management/application.log
+
+# Management endpoints for production monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    export:
+      prometheus:
+        enabled: true

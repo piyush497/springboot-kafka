@@ -1,0 +1,71 @@
+spring:
+  profiles:
+    active: local
+  
+  # Local Kafka Configuration
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: courier-management-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "com.courier.dto,com.courier.event"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        spring.json.add.type.headers: false
+        retries: 3
+        acks: all
+
+  # Spring Cloud Stream Configuration for local Kafka
+  cloud:
+    stream:
+      kafka:
+        binder:
+          brokers: localhost:9092
+          auto-create-topics: true
+          auto-add-partitions: true
+      bindings:
+        # EDI order processing
+        ediParcelOrders-in-0:
+          destination: incoming-parcel-orders
+          content-type: application/json
+          group: courier-edi-group
+        
+        # Internal event processing
+        parcelEvents-out-0:
+          destination: parcel-tracking-events
+          content-type: application/json
+        parcelEvents-in-0:
+          destination: parcel-tracking-events
+          content-type: application/json
+          group: courier-internal-group
+        
+        # ABC Transport integration
+        abcTransport-out-0:
+          destination: abc-transport-events
+          content-type: application/json
+        abcTransportResponse-in-0:
+          destination: abc-transport-responses
+          content-type: application/json
+          group: courier-abc-response-group
+
+# Kafka Topics Configuration
+kafka:
+  topics:
+    incoming-orders: "incoming-parcel-orders"
+    abc-transport: "abc-transport-events"
+    abc-transport-responses: "abc-transport-responses"
+    tracking-events: "parcel-tracking-events"
+    internal-events: "courier-internal-events"
+
+# Logging for local development
+logging:
+  level:
+    com.courier: DEBUG
+    org.springframework.kafka: INFO
+    org.springframework.cloud.stream: DEBUG
+    org.apache.kafka: WARN

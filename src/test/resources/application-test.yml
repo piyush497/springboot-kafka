@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: courier-management-system-test
+  profiles:
+    active: test
+  
+  # H2 in-memory database for testing
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: 
+    driver-class-name: org.h2.Driver
+  
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        format_sql: false
+  
+  # Embedded Kafka configuration for testing
+  kafka:
+    bootstrap-servers: localhost:9093
+    consumer:
+      group-id: test-consumer-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+  
+  # Spring Cloud Stream test configuration
+  cloud:
+    stream:
+      kafka:
+        binder:
+          brokers: localhost:9093
+          auto-create-topics: true
+      bindings:
+        parcelEvents-out-0:
+          destination: parcel-tracking-events
+          content-type: application/json
+        abcTransport-out-0:
+          destination: abc-transport-events
+          content-type: application/json
+
+# Test Kafka Topics
+kafka:
+  topics:
+    incoming-orders: "test-incoming-parcel-orders"
+    abc-transport: "abc-transport-events"
+    abc-transport-responses: "abc-transport-responses"
+    tracking-events: "parcel-tracking-events"
+    internal-events: "test-courier-internal-events"
+
+# Logging for tests
+logging:
+  level:
+    com.courier: DEBUG
+    org.springframework.kafka: WARN
+    org.springframework.cloud.stream: WARN
+    org.apache.kafka: WARN
+    org.hibernate: WARN

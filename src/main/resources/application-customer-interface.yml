@@ -1,0 +1,189 @@
+spring:
+  profiles:
+    active: customer-interface
+  application:
+    name: courier-customer-interface
+  
+  # Database configuration for customer interface
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://courier-postgres-service:5432/courier_db}
+    username: ${DATABASE_USERNAME:courier_user}
+    password: ${DATABASE_PASSWORD:courier_pass}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+  
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+        jdbc:
+          batch_size: 25
+        order_inserts: true
+        order_updates: true
+  
+  # Kafka configuration for customer interface
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:courier-kafka-service:9092}
+    consumer:
+      group-id: customer-interface-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "com.courier.dto,com.courier.event"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        spring.json.add.type.headers: false
+        retries: 3
+        acks: all
+        enable.idempotence: true
+  
+  # Spring Cloud Stream for Azure Event Hub (production)
+  cloud:
+    azure:
+      eventhubs:
+        connection-string: ${AZURE_EVENTHUBS_CONNECTION_STRING:}
+        namespace: ${AZURE_EVENTHUBS_NAMESPACE:}
+    stream:
+      kafka:
+        binder:
+          brokers: ${KAFKA_BOOTSTRAP_SERVERS:courier-kafka-service:9092}
+          auto-create-topics: true
+          auto-add-partitions: true
+      bindings:
+        # Customer parcel submissions
+        customerParcels-out-0:
+          destination: customer-parcel-submissions
+          content-type: application/json
+          producer:
+            partition-key-expression: headers['customerId']
+        
+        # Parcel status updates for customers
+        parcelStatusUpdates-in-0:
+          destination: parcel-status-updates
+          content-type: application/json
+          group: customer-interface-status-group
+          consumer:
+            auto-startup: true
+
+# Kafka Topics for customer interface
+kafka:
+  topics:
+    customer-submissions: "customer-parcel-submissions"
+    status-updates: "parcel-status-updates"
+    customer-notifications: "customer-notifications"
+
+# Server configuration for customer interface
+server:
+  port: ${SERVER_PORT:8081}
+  servlet:
+    context-path: /api/v1/customer
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+  http2:
+    enabled: true
+
+# Security configuration for customer interface
+courier:
+  app:
+    jwtSecret: ${JWT_SECRET:customerInterfaceSecretKey2024!@#$%^&*()}
+    jwtExpirationMs: ${JWT_EXPIRATION_MS:86400000} # 24 hours
+    jwtRefreshExpirationMs: ${JWT_REFRESH_EXPIRATION_MS:604800000} # 7 days
+
+# Management and monitoring for AKS
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,readiness,liveness
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+    readiness:
+      enabled: true
+    liveness:
+      enabled: true
+  health:
+    readinessstate:
+      enabled: true
+    livenessstate:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: courier-customer-interface
+      environment: ${ENVIRONMENT:development}
+
+# Logging configuration for AKS
+logging:
+  level:
+    com.courier: ${LOG_LEVEL:INFO}
+    org.springframework.kafka: WARN
+    org.springframework.cloud.stream: WARN
+    org.springframework.security: WARN
+    org.hibernate: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId:-},%X{spanId:-}] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId:-},%X{spanId:-}] %logger{36} - %msg%n"
+  file:
+    name: /var/log/courier/customer-interface.log
+
+# Customer interface specific configuration
+customer-interface:
+  features:
+    parcel-registration: true
+    parcel-tracking: true
+    notifications: true
+    file-upload: true
+  limits:
+    max-parcels-per-day: ${MAX_PARCELS_PER_DAY:100}
+    max-file-size: ${MAX_FILE_SIZE:10MB}
+    rate-limit-requests-per-minute: ${RATE_LIMIT:60}
+  notification:
+    email:
+      enabled: ${EMAIL_NOTIFICATIONS_ENABLED:true}
+      from: ${EMAIL_FROM:noreply@courier.com}
+    sms:
+      enabled: ${SMS_NOTIFICATIONS_ENABLED:false}
+
+# External service URLs
+external-services:
+  main-courier-service: ${MAIN_COURIER_SERVICE_URL:http://courier-main-service:8080}
+  notification-service: ${NOTIFICATION_SERVICE_URL:http://courier-notification-service:8082}
+  
+# Resilience4j configuration for circuit breakers
+resilience4j:
+  circuitbreaker:
+    instances:
+      main-courier-service:
+        register-health-indicator: true
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        permitted-number-of-calls-in-half-open-state: 3
+        wait-duration-in-open-state: 10s
+        failure-rate-threshold: 50
+        slow-call-rate-threshold: 50
+        slow-call-duration-threshold: 2s
+  retry:
+    instances:
+      main-courier-service:
+        max-attempts: 3
+        wait-duration: 1s
+        exponential-backoff-multiplier: 2

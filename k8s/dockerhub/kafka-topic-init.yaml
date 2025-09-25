@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topic-init
+  namespace: courier-system
+  labels:
+    app.kubernetes.io/name: courier-microservices
+    app.kubernetes.io/component: kafka-init
+spec:
+  template:
+    metadata:
+      labels:
+        app: kafka-topic-init
+        component: kafka-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: kafka-topic-init
+        image: confluentinc/cp-kafka:7.4.0
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Waiting for Kafka to be ready..."
+          until kafka-topics --bootstrap-server courier-kafka:9092 --list; do
+            echo "Kafka not ready yet, waiting..."
+            sleep 10
+          done
+          
+          echo "Creating Kafka topics for Courier Microservices..."
+          
+          # Main service topics (from EventStreamService configuration)
+          kafka-topics --bootstrap-server courier-kafka:9092 --create --if-not-exists --topic incoming-parcel-orders --replication-factor 1 --partitions 3
+          kafka-topics --bootstrap-server courier-kafka:9092 --create --if-not-exists --topic abc-transport-events --replication-factor 1 --partitions 3
+          kafka-topics --bootstrap-server courier-kafka:9092 --create --if-not-exists --topic abc-transport-responses --replication-factor 1 --partitions 3
+          kafka-topics --bootstrap-server courier-kafka:9092 --create --if-not-exists --topic parcel-tracking-events --replication-factor 1 --partitions 3
+          kafka-topics --bootstrap-server courier-kafka:9092 --create --if-not-exists --topic courier-internal-events --replication-factor 1 --partitions 3
+          
+          # Customer interface topics
+          kafka-topics --bootstrap-server courier-kafka:9092 --create --if-not-exists --topic customer-parcel-submissions --replication-factor 1 --partitions 3
+          kafka-topics --bootstrap-server courier-kafka:9092 --create --if-not-exists --topic parcel-status-updates --replication-factor 1 --partitions 3
+          kafka-topics --bootstrap-server courier-kafka:9092 --create --if-not-exists --topic customer-notifications --replication-factor 1 --partitions 3
+          
+          echo "All topics created successfully:"
+          kafka-topics --bootstrap-server courier-kafka:9092 --list
+          
+          echo "Topic details:"
+          for topic in incoming-parcel-orders abc-transport-events abc-transport-responses parcel-tracking-events courier-internal-events customer-parcel-submissions parcel-status-updates customer-notifications; do
+            echo "=== Topic: $topic ==="
+            kafka-topics --bootstrap-server courier-kafka:9092 --describe --topic $topic
+          done
+          
+          echo "Kafka topic initialization completed successfully!"
+      volumes:
+      - name: kafka-topics-config
+        configMap:
+          name: kafka-topics-config

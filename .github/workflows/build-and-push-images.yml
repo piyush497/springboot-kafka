@@ -1,0 +1,552 @@
+name: Build and Push Docker Images to Docker Hub
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'customer-interface-service/**'
+      - 'frontend/**'
+      - 'Dockerfile*'
+      - 'build.gradle'
+      - 'package*.json'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      push_to_registry:
+        description: 'Push images to Docker Hub'
+        required: true
+        default: true
+        type: boolean
+      tag_suffix:
+        description: 'Tag suffix (e.g., -beta, -rc1)'
+        required: false
+        default: ''
+        type: string
+
+env:
+  REGISTRY: docker.io
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      main-service: ${{ steps.changes.outputs.main-service }}
+      customer-interface: ${{ steps.changes.outputs.customer-interface }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      any-changes: ${{ steps.changes.outputs.any-changes }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - uses: dorny/paths-filter@v2
+      id: changes
+      with:
+        filters: |
+          main-service:
+            - 'src/**'
+            - 'build.gradle'
+            - 'Dockerfile.backend'
+            - 'gradle/**'
+          customer-interface:
+            - 'customer-interface-service/**'
+          frontend:
+            - 'frontend/**'
+          any-changes:
+            - 'src/**'
+            - 'customer-interface-service/**'
+            - 'frontend/**'
+            - 'Dockerfile*'
+
+  build-main-service:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.main-service == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Cache Gradle packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Build with Gradle
+      run: ./gradlew clean build -x test
+
+    - name: Run tests
+      run: ./gradlew test
+
+    - name: Generate test report
+      uses: dorny/test-reporter@v1
+      if: success() || failure()
+      with:
+        name: Main Service Tests
+        path: build/test-results/test/*.xml
+        reporter: java-junit
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ env.DOCKER_USERNAME }}
+        password: ${{ env.DOCKER_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.DOCKER_USERNAME }}/courier-main-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value={{branch}}-{{date 'YYYYMMDD-HHmmss'}}
+        labels: |
+          org.opencontainers.image.title=Courier Main Service
+          org.opencontainers.image.description=Spring Boot main service for courier management system
+          org.opencontainers.image.vendor=Courier Management Team
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.backend
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' && (github.event.inputs.push_to_registry != 'false') }}
+        tags: ${{ steps.meta.outputs.tags }}${{ github.event.inputs.tag_suffix || '' }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          VCS_REF=${{ github.sha }}
+
+    - name: Generate SBOM
+      if: github.event_name != 'pull_request'
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ env.REGISTRY }}/${{ env.DOCKER_USERNAME }}/courier-main-service:latest
+        format: spdx-json
+        output-file: main-service-sbom.spdx.json
+
+    - name: Upload SBOM
+      if: github.event_name != 'pull_request'
+      uses: actions/upload-artifact@v3
+      with:
+        name: main-service-sbom
+        path: main-service-sbom.spdx.json
+
+  build-customer-interface:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.customer-interface == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Cache Gradle packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-customer-${{ hashFiles('customer-interface-service/**/*.gradle*') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-customer-
+
+    - name: Copy shared entities and DTOs
+      run: |
+        mkdir -p customer-interface-service/src/main/java/com/courier/entity
+        mkdir -p customer-interface-service/src/main/java/com/courier/dto
+        cp -r src/main/java/com/courier/entity/* customer-interface-service/src/main/java/com/courier/entity/ || true
+        cp src/main/java/com/courier/dto/EDIParcelOrderDTO.java customer-interface-service/src/main/java/com/courier/dto/ || true
+
+    - name: Build Customer Interface Service
+      run: |
+        cd customer-interface-service
+        chmod +x gradlew
+        ./gradlew clean build -x test
+
+    - name: Run Customer Interface tests
+      run: |
+        cd customer-interface-service
+        ./gradlew test
+
+    - name: Generate test report
+      uses: dorny/test-reporter@v1
+      if: success() || failure()
+      with:
+        name: Customer Interface Tests
+        path: customer-interface-service/build/test-results/test/*.xml
+        reporter: java-junit
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ env.DOCKER_USERNAME }}
+        password: ${{ env.DOCKER_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.DOCKER_USERNAME }}/courier-customer-interface
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value={{branch}}-{{date 'YYYYMMDD-HHmmss'}}
+        labels: |
+          org.opencontainers.image.title=Courier Customer Interface Service
+          org.opencontainers.image.description=Spring Boot customer interface service for courier management system
+          org.opencontainers.image.vendor=Courier Management Team
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./customer-interface-service
+        file: ./customer-interface-service/Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' && (github.event.inputs.push_to_registry != 'false') }}
+        tags: ${{ steps.meta.outputs.tags }}${{ github.event.inputs.tag_suffix || '' }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          VCS_REF=${{ github.sha }}
+
+    - name: Generate SBOM
+      if: github.event_name != 'pull_request'
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ env.REGISTRY }}/${{ env.DOCKER_USERNAME }}/courier-customer-interface:latest
+        format: spdx-json
+        output-file: customer-interface-sbom.spdx.json
+
+    - name: Upload SBOM
+      if: github.event_name != 'pull_request'
+      uses: actions/upload-artifact@v3
+      with:
+        name: customer-interface-sbom
+        path: customer-interface-sbom.spdx.json
+
+  build-frontend:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        cd frontend
+        npm ci
+
+    - name: Run linting
+      run: |
+        cd frontend
+        npm run lint
+
+    - name: Run tests
+      run: |
+        cd frontend
+        npm test -- --coverage --watchAll=false
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        directory: frontend/coverage
+        flags: frontend
+
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+      env:
+        REACT_APP_MAIN_API_URL: ${{ vars.REACT_APP_MAIN_API_URL || 'http://localhost:8080/api/v1' }}
+        REACT_APP_CUSTOMER_API_URL: ${{ vars.REACT_APP_CUSTOMER_API_URL || 'http://localhost:8081/api/v1/customer' }}
+        REACT_APP_ENVIRONMENT: production
+        REACT_APP_VERSION: ${{ github.sha }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ env.DOCKER_USERNAME }}
+        password: ${{ env.DOCKER_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.DOCKER_USERNAME }}/courier-frontend
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value={{branch}}-{{date 'YYYYMMDD-HHmmss'}}
+        labels: |
+          org.opencontainers.image.title=Courier Frontend
+          org.opencontainers.image.description=React frontend application for courier management system
+          org.opencontainers.image.vendor=Courier Management Team
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./frontend
+        file: ./frontend/Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' && (github.event.inputs.push_to_registry != 'false') }}
+        tags: ${{ steps.meta.outputs.tags }}${{ github.event.inputs.tag_suffix || '' }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          VCS_REF=${{ github.sha }}
+          REACT_APP_VERSION=${{ github.sha }}
+
+    - name: Generate SBOM
+      if: github.event_name != 'pull_request'
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ env.REGISTRY }}/${{ env.DOCKER_USERNAME }}/courier-frontend:latest
+        format: spdx-json
+        output-file: frontend-sbom.spdx.json
+
+    - name: Upload SBOM
+      if: github.event_name != 'pull_request'
+      uses: actions/upload-artifact@v3
+      with:
+        name: frontend-sbom
+        path: frontend-sbom.spdx.json
+
+  security-scan:
+    needs: [build-main-service, build-customer-interface, build-frontend]
+    if: always() && (needs.build-main-service.result == 'success' || needs.build-customer-interface.result == 'success' || needs.build-frontend.result == 'success')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [
+          { name: 'main-service', condition: '${{ needs.build-main-service.result == "success" }}' },
+          { name: 'customer-interface', condition: '${{ needs.build-customer-interface.result == "success" }}' },
+          { name: 'frontend', condition: '${{ needs.build-frontend.result == "success" }}' }
+        ]
+    steps:
+    - name: Run Trivy vulnerability scanner
+      if: ${{ matrix.service.condition }}
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.DOCKER_USERNAME }}/courier-${{ matrix.service.name }}:latest
+        format: 'sarif'
+        output: 'trivy-${{ matrix.service.name }}-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      if: ${{ matrix.service.condition }}
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-${{ matrix.service.name }}-results.sarif'
+
+  update-deployment-values:
+    needs: [build-main-service, build-customer-interface, build-frontend]
+    if: always() && github.ref == 'refs/heads/main' && (needs.build-main-service.result == 'success' || needs.build-customer-interface.result == 'success' || needs.build-frontend.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Update Helm values with new image tags
+      run: |
+        # Update image tags in Helm values files
+        if [[ "${{ needs.build-main-service.result }}" == "success" ]]; then
+          sed -i "s/tag: .*/tag: \"${{ github.sha }}\"/g" helm/courier-microservices/values.yaml
+          sed -i "/mainService:/,/^[^ ]/ s/tag: .*/tag: \"${{ github.sha }}\"/g" helm/courier-microservices/values-production.yaml
+        fi
+        
+        if [[ "${{ needs.build-customer-interface.result }}" == "success" ]]; then
+          sed -i "/customerInterface:/,/^[^ ]/ s/tag: .*/tag: \"${{ github.sha }}\"/g" helm/courier-microservices/values.yaml
+          sed -i "/customerInterface:/,/^[^ ]/ s/tag: .*/tag: \"${{ github.sha }}\"/g" helm/courier-microservices/values-production.yaml
+        fi
+        
+        if [[ "${{ needs.build-frontend.result }}" == "success" ]]; then
+          sed -i "/frontend:/,/^[^ ]/ s/tag: .*/tag: \"${{ github.sha }}\"/g" helm/courier-microservices/values.yaml
+          sed -i "/frontend:/,/^[^ ]/ s/tag: .*/tag: \"${{ github.sha }}\"/g" helm/courier-microservices/values-production.yaml
+        fi
+
+    - name: Commit updated values
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add helm/courier-microservices/values*.yaml
+        git diff --staged --quiet || git commit -m "Update image tags to ${{ github.sha }}"
+        git push
+
+  notify:
+    needs: [build-main-service, build-customer-interface, build-frontend, security-scan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - name: Prepare notification message
+      id: message
+      run: |
+        echo "Building notification message..."
+        
+        # Determine overall status
+        if [[ "${{ needs.build-main-service.result }}" == "success" && "${{ needs.build-customer-interface.result }}" == "success" && "${{ needs.build-frontend.result }}" == "success" ]]; then
+          STATUS="✅ SUCCESS"
+          COLOR="good"
+        elif [[ "${{ needs.build-main-service.result }}" == "failure" || "${{ needs.build-customer-interface.result }}" == "failure" || "${{ needs.build-frontend.result }}" == "failure" ]]; then
+          STATUS="❌ FAILURE"
+          COLOR="danger"
+        else
+          STATUS="⚠️ PARTIAL"
+          COLOR="warning"
+        fi
+        
+        # Build services list
+        SERVICES=""
+        if [[ "${{ needs.build-main-service.result }}" == "success" ]]; then
+          SERVICES="$SERVICES\n• Main Service: ✅"
+        elif [[ "${{ needs.build-main-service.result }}" == "failure" ]]; then
+          SERVICES="$SERVICES\n• Main Service: ❌"
+        fi
+        
+        if [[ "${{ needs.build-customer-interface.result }}" == "success" ]]; then
+          SERVICES="$SERVICES\n• Customer Interface: ✅"
+        elif [[ "${{ needs.build-customer-interface.result }}" == "failure" ]]; then
+          SERVICES="$SERVICES\n• Customer Interface: ❌"
+        fi
+        
+        if [[ "${{ needs.build-frontend.result }}" == "success" ]]; then
+          SERVICES="$SERVICES\n• Frontend: ✅"
+        elif [[ "${{ needs.build-frontend.result }}" == "failure" ]]; then
+          SERVICES="$SERVICES\n• Frontend: ❌"
+        fi
+        
+        echo "status=$STATUS" >> $GITHUB_OUTPUT
+        echo "color=$COLOR" >> $GITHUB_OUTPUT
+        echo "services=$SERVICES" >> $GITHUB_OUTPUT
+
+    - name: Notify Slack
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: custom
+        custom_payload: |
+          {
+            "text": "Docker Build Results",
+            "attachments": [
+              {
+                "color": "${{ steps.message.outputs.color }}",
+                "title": "Courier Microservices Docker Build ${{ steps.message.outputs.status }}",
+                "fields": [
+                  {
+                    "title": "Repository",
+                    "value": "${{ github.repository }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Branch",
+                    "value": "${{ github.ref_name }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Commit",
+                    "value": "${{ github.sha }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Author",
+                    "value": "${{ github.actor }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Services Built",
+                    "value": "${{ steps.message.outputs.services }}",
+                    "short": false
+                  },
+                  {
+                    "title": "Docker Hub",
+                    "value": "https://hub.docker.com/u/${{ env.DOCKER_USERNAME }}",
+                    "short": false
+                  }
+                ]
+              }
+            ]
+          }
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    - name: Create deployment summary
+      run: |
+        echo "## 🚀 Docker Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ steps.message.outputs.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Services Built:" >> $GITHUB_STEP_SUMMARY
+        echo "${{ steps.message.outputs.services }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Docker Hub Images:" >> $GITHUB_STEP_SUMMARY
+        if [[ "${{ needs.build-main-service.result }}" == "success" ]]; then
+          echo "- [\`${{ env.DOCKER_USERNAME }}/courier-main-service:latest\`](https://hub.docker.com/r/${{ env.DOCKER_USERNAME }}/courier-main-service)" >> $GITHUB_STEP_SUMMARY
+        fi
+        if [[ "${{ needs.build-customer-interface.result }}" == "success" ]]; then
+          echo "- [\`${{ env.DOCKER_USERNAME }}/courier-customer-interface:latest\`](https://hub.docker.com/r/${{ env.DOCKER_USERNAME }}/courier-customer-interface)" >> $GITHUB_STEP_SUMMARY
+        fi
+        if [[ "${{ needs.build-frontend.result }}" == "success" ]]; then
+          echo "- [\`${{ env.DOCKER_USERNAME }}/courier-frontend:latest\`](https://hub.docker.com/r/${{ env.DOCKER_USERNAME }}/courier-frontend)" >> $GITHUB_STEP_SUMMARY
+        fi

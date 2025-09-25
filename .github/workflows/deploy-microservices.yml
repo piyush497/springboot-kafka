@@ -1,0 +1,481 @@
+name: Deploy Courier Microservices to Kubernetes
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'customer-interface-service/**'
+      - 'frontend/**'
+      - 'helm/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+        - development
+        - staging
+        - production
+      force_deploy:
+        description: 'Force deployment even if no changes detected'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: courierregistry.azurecr.io
+  AKS_CLUSTER_NAME: courier-aks
+  AKS_RESOURCE_GROUP: courier-rg
+  NAMESPACE: courier-system
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      main-service: ${{ steps.changes.outputs.main-service }}
+      customer-interface: ${{ steps.changes.outputs.customer-interface }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      helm: ${{ steps.changes.outputs.helm }}
+      force-deploy: ${{ github.event.inputs.force_deploy == 'true' }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - uses: dorny/paths-filter@v2
+      id: changes
+      with:
+        filters: |
+          main-service:
+            - 'src/**'
+            - 'build.gradle'
+            - 'Dockerfile.backend'
+          customer-interface:
+            - 'customer-interface-service/**'
+          frontend:
+            - 'frontend/**'
+          helm:
+            - 'helm/**'
+
+  build-main-service:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.main-service == 'true' || needs.detect-changes.outputs.force-deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Cache Gradle packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Build with Gradle
+      run: ./gradlew clean build -x test
+
+    - name: Run tests
+      run: ./gradlew test
+
+    - name: Generate test report
+      uses: dorny/test-reporter@v1
+      if: success() || failure()
+      with:
+        name: Main Service Tests
+        path: build/test-results/test/*.xml
+        reporter: java-junit
+
+    - name: Login to Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.REGISTRY }}
+        username: ${{ secrets.ACR_USERNAME }}
+        password: ${{ secrets.ACR_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: ${{ env.REGISTRY }}/courier-main-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        file: ./Dockerfile.backend
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+  build-customer-interface:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.customer-interface == 'true' || needs.detect-changes.outputs.force-deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Cache Gradle packages
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-customer-${{ hashFiles('customer-interface-service/**/*.gradle*') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-customer-
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x customer-interface-service/gradlew
+      working-directory: customer-interface-service
+
+    - name: Build Customer Interface Service
+      run: ./gradlew clean build -x test
+      working-directory: customer-interface-service
+
+    - name: Run Customer Interface tests
+      run: ./gradlew test
+      working-directory: customer-interface-service
+
+    - name: Generate test report
+      uses: dorny/test-reporter@v1
+      if: success() || failure()
+      with:
+        name: Customer Interface Tests
+        path: customer-interface-service/build/test-results/test/*.xml
+        reporter: java-junit
+
+    - name: Login to Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.REGISTRY }}
+        username: ${{ secrets.ACR_USERNAME }}
+        password: ${{ secrets.ACR_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: ${{ env.REGISTRY }}/courier-customer-interface
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: ./customer-interface-service
+        file: ./customer-interface-service/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+  build-frontend:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.force-deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+      working-directory: frontend
+
+    - name: Run linting
+      run: npm run lint
+      working-directory: frontend
+
+    - name: Run tests
+      run: npm test -- --coverage --watchAll=false
+      working-directory: frontend
+
+    - name: Build frontend
+      run: npm run build
+      working-directory: frontend
+      env:
+        REACT_APP_MAIN_API_URL: ${{ vars.REACT_APP_MAIN_API_URL }}
+        REACT_APP_CUSTOMER_API_URL: ${{ vars.REACT_APP_CUSTOMER_API_URL }}
+
+    - name: Login to Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.REGISTRY }}
+        username: ${{ secrets.ACR_USERNAME }}
+        password: ${{ secrets.ACR_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: ${{ env.REGISTRY }}/courier-frontend
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: ./frontend
+        file: ./frontend/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+  generate-manifests:
+    needs: [detect-changes, build-main-service, build-customer-interface, build-frontend]
+    if: always() && (needs.detect-changes.outputs.helm == 'true' || needs.detect-changes.outputs.force-deploy == 'true' || needs.build-main-service.result == 'success' || needs.build-customer-interface.result == 'success' || needs.build-frontend.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: '3.12.0'
+
+    - name: Determine environment
+      id: env
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          echo "environment=production" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          echo "environment=staging" >> $GITHUB_OUTPUT
+        else
+          echo "environment=development" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Read application configurations
+      id: config
+      run: |
+        # Extract configuration from application.yml files
+        echo "Reading main service configuration..."
+        MAIN_PORT=$(yq eval '.server.port // 8080' src/main/resources/application.yml)
+        echo "main_port=$MAIN_PORT" >> $GITHUB_OUTPUT
+        
+        echo "Reading customer interface configuration..."
+        CUSTOMER_PORT=$(yq eval '.server.port // 8081' customer-interface-service/src/main/resources/application.yml)
+        echo "customer_port=$CUSTOMER_PORT" >> $GITHUB_OUTPUT
+        
+        echo "Reading database configuration..."
+        DB_NAME=$(yq eval '.spring.datasource.url | split("/") | .[-1] // "courier_db"' src/main/resources/application.yml)
+        echo "db_name=$DB_NAME" >> $GITHUB_OUTPUT
+
+    - name: Generate Helm values for environment
+      run: |
+        cat > helm/courier-microservices/values-${{ steps.env.outputs.environment }}.yaml << EOF
+        environment: ${{ steps.env.outputs.environment }}
+        
+        mainService:
+          image:
+            tag: ${{ github.sha }}
+          port: ${{ steps.config.outputs.main_port }}
+          replicaCount: ${{ steps.env.outputs.environment == 'production' && '5' || '3' }}
+          
+        customerInterface:
+          image:
+            tag: ${{ github.sha }}
+          port: ${{ steps.config.outputs.customer_port }}
+          replicaCount: ${{ steps.env.outputs.environment == 'production' && '5' || '3' }}
+          
+        frontend:
+          image:
+            tag: ${{ github.sha }}
+          replicaCount: ${{ steps.env.outputs.environment == 'production' && '3' || '2' }}
+          
+        database:
+          name: ${{ steps.config.outputs.db_name }}
+        EOF
+
+    - name: Validate Helm chart
+      run: |
+        helm lint helm/courier-microservices
+        helm template courier-microservices helm/courier-microservices \
+          --values helm/courier-microservices/values-${{ steps.env.outputs.environment }}.yaml \
+          --namespace ${{ env.NAMESPACE }} > manifests.yaml
+
+    - name: Upload generated manifests
+      uses: actions/upload-artifact@v3
+      with:
+        name: k8s-manifests-${{ steps.env.outputs.environment }}
+        path: manifests.yaml
+
+  deploy-to-kubernetes:
+    needs: [generate-manifests]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: 
+      name: ${{ needs.generate-manifests.outputs.environment || 'development' }}
+      url: https://app.courier.company.com
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: '3.12.0'
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Get AKS credentials
+      run: |
+        az aks get-credentials \
+          --resource-group ${{ env.AKS_RESOURCE_GROUP }} \
+          --name ${{ env.AKS_CLUSTER_NAME }} \
+          --overwrite-existing
+
+    - name: Create namespace
+      run: |
+        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Create secrets
+      run: |
+        # Create database secret
+        kubectl create secret generic courier-database-secret \
+          --from-literal=password="${{ secrets.DATABASE_PASSWORD }}" \
+          --namespace ${{ env.NAMESPACE }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Create JWT secrets
+        kubectl create secret generic courier-jwt-secret \
+          --from-literal=main-service-secret="${{ secrets.JWT_SECRET_MAIN }}" \
+          --from-literal=customer-interface-secret="${{ secrets.JWT_SECRET_CUSTOMER }}" \
+          --namespace ${{ env.NAMESPACE }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Create ACR secret
+        kubectl create secret docker-registry acr-secret \
+          --docker-server=${{ env.REGISTRY }} \
+          --docker-username=${{ secrets.ACR_USERNAME }} \
+          --docker-password=${{ secrets.ACR_PASSWORD }} \
+          --namespace ${{ env.NAMESPACE }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Determine environment
+      id: env
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          echo "environment=production" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          echo "environment=staging" >> $GITHUB_OUTPUT
+        else
+          echo "environment=development" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Deploy with Helm
+      run: |
+        helm upgrade --install courier-microservices helm/courier-microservices \
+          --values helm/courier-microservices/values.yaml \
+          --values helm/courier-microservices/values-${{ steps.env.outputs.environment }}.yaml \
+          --namespace ${{ env.NAMESPACE }} \
+          --timeout 10m \
+          --wait \
+          --atomic
+
+    - name: Verify deployment
+      run: |
+        echo "Checking deployment status..."
+        kubectl rollout status deployment/courier-main-service -n ${{ env.NAMESPACE }} --timeout=300s
+        kubectl rollout status deployment/courier-customer-interface -n ${{ env.NAMESPACE }} --timeout=300s
+        kubectl rollout status deployment/courier-frontend -n ${{ env.NAMESPACE }} --timeout=300s
+        
+        echo "Checking pod status..."
+        kubectl get pods -n ${{ env.NAMESPACE }}
+        
+        echo "Checking services..."
+        kubectl get svc -n ${{ env.NAMESPACE }}
+
+    - name: Run health checks
+      run: |
+        echo "Running health checks..."
+        
+        # Wait for services to be ready
+        sleep 60
+        
+        # Health check for main service
+        kubectl run health-check-main --image=curlimages/curl --rm -i --restart=Never -n ${{ env.NAMESPACE }} -- \
+          curl -f http://courier-main-service:8080/actuator/health || echo "Main service health check failed"
+        
+        # Health check for customer interface
+        kubectl run health-check-customer --image=curlimages/curl --rm -i --restart=Never -n ${{ env.NAMESPACE }} -- \
+          curl -f http://courier-customer-interface:8081/actuator/health || echo "Customer interface health check failed"
+        
+        # Health check for frontend
+        kubectl run health-check-frontend --image=curlimages/curl --rm -i --restart=Never -n ${{ env.NAMESPACE }} -- \
+          curl -f http://courier-frontend:3000/health || echo "Frontend health check failed"
+
+    - name: Get deployment info
+      run: |
+        echo "=== Deployment Summary ==="
+        echo "Environment: ${{ steps.env.outputs.environment }}"
+        echo "Namespace: ${{ env.NAMESPACE }}"
+        echo "Git SHA: ${{ github.sha }}"
+        echo ""
+        echo "=== Services ==="
+        kubectl get svc -n ${{ env.NAMESPACE }}
+        echo ""
+        echo "=== Ingress ==="
+        kubectl get ingress -n ${{ env.NAMESPACE }}
+
+  notify:
+    needs: [deploy-to-kubernetes]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - name: Notify deployment status
+      uses: 8398a7/action-slack@v3
+      if: always()
+      with:
+        status: ${{ needs.deploy-to-kubernetes.result }}
+        text: |
+          Courier Microservices Deployment ${{ needs.deploy-to-kubernetes.result }}
+          Environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+          Commit: ${{ github.sha }}
+          Author: ${{ github.actor }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

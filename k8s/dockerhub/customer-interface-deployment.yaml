@@ -1,0 +1,193 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: courier-customer-interface
+  namespace: courier-system
+  labels:
+    app: courier-customer-interface
+    component: backend
+    tier: customer-interface
+    app.kubernetes.io/name: courier-microservices
+    app.kubernetes.io/component: customer-interface
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: courier-customer-interface
+      tier: customer-interface
+  template:
+    metadata:
+      labels:
+        app: courier-customer-interface
+        component: backend
+        tier: customer-interface
+        app.kubernetes.io/name: courier-microservices
+        app.kubernetes.io/component: customer-interface
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      imagePullSecrets:
+      - name: dockerhub-secret
+      containers:
+      - name: courier-customer-interface
+        # Replace YOUR_DOCKERHUB_USERNAME with your actual Docker Hub username
+        image: YOUR_DOCKERHUB_USERNAME/courier-customer-interface:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8081
+          name: http
+          protocol: TCP
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: "production"
+        - name: SERVER_PORT
+          value: "8081"
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: courier-config
+              key: DATABASE_URL
+        - name: DATABASE_USERNAME
+          valueFrom:
+            configMapKeyRef:
+              name: courier-config
+              key: DATABASE_USERNAME
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: courier-database-secret
+              key: password
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: courier-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: courier-jwt-secret
+              key: customer-interface-secret
+        - name: MAIN_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: courier-config
+              key: MAIN_SERVICE_URL
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: courier-config
+              key: LOG_LEVEL
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: courier-config
+              key: ENVIRONMENT
+        - name: MAX_PARCELS_PER_DAY
+          valueFrom:
+            configMapKeyRef:
+              name: courier-config
+              key: MAX_PARCELS_PER_DAY
+        - name: RATE_LIMIT
+          valueFrom:
+            configMapKeyRef:
+              name: courier-config
+              key: RATE_LIMIT
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8081
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        volumeMounts:
+        - name: logs
+          mountPath: /var/log/courier
+        - name: temp
+          mountPath: /tmp
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: temp
+        emptyDir: {}
+      nodeSelector:
+        kubernetes.io/os: linux
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - courier-customer-interface
+              topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: courier-customer-interface
+  namespace: courier-system
+  labels:
+    app: courier-customer-interface
+    component: backend
+    tier: customer-interface
+    app.kubernetes.io/name: courier-microservices
+    app.kubernetes.io/component: customer-interface
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8081"
+    prometheus.io/path: "/actuator/prometheus"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8081
+    targetPort: 8081
+    protocol: TCP
+    name: http
+  selector:
+    app: courier-customer-interface
+    tier: customer-interface

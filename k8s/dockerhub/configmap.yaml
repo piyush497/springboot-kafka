@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: courier-config
+  namespace: courier-system
+  labels:
+    app.kubernetes.io/name: courier-microservices
+    app.kubernetes.io/component: configuration
+data:
+  # Database configuration
+  DATABASE_URL: "jdbc:postgresql://courier-postgresql:5432/courier_db"
+  DATABASE_USERNAME: "courier_user"
+  
+  # Kafka configuration
+  KAFKA_BOOTSTRAP_SERVERS: "courier-kafka:9092"
+  
+  # Redis configuration
+  REDIS_HOST: "courier-redis"
+  REDIS_PORT: "6379"
+  
+  # Service URLs
+  MAIN_SERVICE_URL: "http://courier-main-service:8080"
+  CUSTOMER_INTERFACE_URL: "http://courier-customer-interface:8081"
+  
+  # Environment
+  ENVIRONMENT: "kubernetes"
+  LOG_LEVEL: "INFO"
+  
+  # Customer Interface specific
+  MAX_PARCELS_PER_DAY: "100"
+  RATE_LIMIT: "60"
+  
+  # Frontend configuration
+  REACT_APP_ENVIRONMENT: "production"
+  REACT_APP_MAIN_API_URL: "http://api.courier.local/api/v1"
+  REACT_APP_CUSTOMER_API_URL: "http://customer.courier.local/api/v1/customer"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-topics-config
+  namespace: courier-system
+  labels:
+    app.kubernetes.io/name: courier-microservices
+    app.kubernetes.io/component: kafka-configuration
+data:
+  topics.txt: |
+    # Main service topics (from EventStreamService)
+    incoming-parcel-orders:3:1
+    abc-transport-events:3:1
+    abc-transport-responses:3:1
+    parcel-tracking-events:3:1
+    courier-internal-events:3:1
+    
+    # Customer interface topics
+    customer-parcel-submissions:3:1
+    parcel-status-updates:3:1
+    customer-notifications:3:1

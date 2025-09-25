@@ -1,0 +1,29 @@
+{{- if .Values.mainService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.mainService.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.mainService.name }}
+    component: backend
+    chart: {{ include "courier-microservices.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+  {{- if .Values.monitoring.prometheus.enabled }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "{{ .Values.mainService.port }}"
+    prometheus.io/path: "/actuator/prometheus"
+  {{- end }}
+spec:
+  type: {{ .Values.mainService.service.type }}
+  ports:
+  - port: {{ .Values.mainService.service.port }}
+    targetPort: {{ .Values.mainService.port }}
+    protocol: TCP
+    name: http
+  selector:
+    app: {{ .Values.mainService.name }}
+    release: {{ .Release.Name }}
+{{- end }}

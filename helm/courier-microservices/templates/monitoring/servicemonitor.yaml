@@ -1,0 +1,78 @@
+{{- if .Values.monitoring.prometheus.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.mainService.name }}-monitor
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.mainService.name }}
+    component: monitoring
+    chart: {{ include "courier-microservices.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.mainService.name }}
+  endpoints:
+  - port: http
+    path: /actuator/prometheus
+    interval: {{ .Values.monitoring.prometheus.serviceMonitor.interval }}
+    scrapeTimeout: 10s
+    honorLabels: true
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.namespace }}
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.customerInterface.name }}-monitor
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.customerInterface.name }}
+    component: monitoring
+    chart: {{ include "courier-microservices.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.customerInterface.name }}
+  endpoints:
+  - port: http
+    path: /actuator/prometheus
+    interval: {{ .Values.monitoring.prometheus.serviceMonitor.interval }}
+    scrapeTimeout: 10s
+    honorLabels: true
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.namespace }}
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.frontend.name }}-monitor
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.frontend.name }}
+    component: monitoring
+    chart: {{ include "courier-microservices.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.frontend.name }}
+  endpoints:
+  - port: http
+    path: /health
+    interval: {{ .Values.monitoring.prometheus.serviceMonitor.interval }}
+    scrapeTimeout: 10s
+    honorLabels: true
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.namespace }}
+{{- end }}

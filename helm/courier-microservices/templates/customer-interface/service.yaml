@@ -1,0 +1,29 @@
+{{- if .Values.customerInterface.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.customerInterface.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.customerInterface.name }}
+    component: customer-interface
+    chart: {{ include "courier-microservices.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+  {{- if .Values.monitoring.prometheus.enabled }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "{{ .Values.customerInterface.port }}"
+    prometheus.io/path: "/actuator/prometheus"
+  {{- end }}
+spec:
+  type: {{ .Values.customerInterface.service.type }}
+  ports:
+  - port: {{ .Values.customerInterface.service.port }}
+    targetPort: {{ .Values.customerInterface.port }}
+    protocol: TCP
+    name: http
+  selector:
+    app: {{ .Values.customerInterface.name }}
+    release: {{ .Release.Name }}
+{{- end }}
